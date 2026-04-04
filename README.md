@@ -51,8 +51,8 @@ The core idea: **predict** incoming demand, **plan** optimal routes under real-w
 │   ┌─────────────────┐   time-of-day aware    │                  │  │
 │   │  Time-Dependent │   travel cost matrix   │                  │  │
 │   │  Cost Matrix    │ ─────────────────────► │                  │  │
-│   │  (speed factors │                        └──────────┬───────┘  │
-│   │  + OSMnx graph) │                                   │          │
+│   │  (Maps API +    │                        └──────────┬───────┘  │
+│   │  departure_time)│                                   │          │
 │   └─────────────────┘                                   │ routes   │
 │                                                         ▼          │
 │                                              DISPATCH + EXECUTION   │
@@ -223,27 +223,94 @@ Fleet assignment is handled as a **pre-processing step** before VRP: the demand 
 ## Part 3 — Time-Dependent Cost Matrix (REMAINING)
 
 ### Goal
-Replace the static (average-speed) travel time matrix with a **time-of-day-aware** travel cost matrix.
+Replace the static (average-speed) travel time matrix with a **time-of-day-aware** travel cost matrix that reflects real Dammam traffic conditions — including prayer-time congestion surges and the midday heat period.
 
-### Approach: Time-of-Day Speed Factor Table
+### Approach: Google Maps Distance Matrix API
 
-A speed factor lookup table grounded in documented Saudi urban traffic patterns. Each cell gives a multiplier applied to the OSMnx free-flow road speed:
+Rather than training a surrogate model on unavailable GPS execution data, or approximating traffic with a hand-crafted speed factor table, we use the **Google Maps Distance Matrix API** with a specified `departure_time` to obtain time-dependent, traffic-aware travel costs directly from Google's live and historical traffic data for the Saudi road network.
 
-| Time Window | Day Type | Speed Factor | Rationale |
-|---|---|---|---|
-| 07:00 – 09:00 | Weekday | 0.60 | Morning commute |
-| 09:00 – 11:30 | Weekday | 0.90 | Mid-morning, relatively clear |
-| 11:30 – 12:15 | Any | 0.75 | Pre-Dhuhr surge |
-| 12:15 – 12:55 | Any | 0.50 | Dhuhr prayer + lunch rush |
-| 13:00 – 15:00 | Weekday | 0.70 | Post-prayer, heat peak |
-| 15:30 – 16:00 | Any | 0.65 | Asr prayer period |
-| 16:00 – 19:00 | Weekday | 0.75 | Afternoon activity |
-| 19:00 – 19:30 | Any | 0.55 | Maghrib prayer + evening rush |
-| 19:30 – 21:00 | Any | 0.70 | Post-Maghrib activity |
-| 21:00 – 01:00 | Any | 0.85 | Evening wind-down |
-| 01:00 – 06:00 | Any | 1.00 | Free-flow (near empty roads) |
+This is the approach used by real logistics operators (Aramex, DHL, Naqel) and produces more accurate cost estimates than any synthetic model could, since Google's data incorporates real historical and live traffic patterns for Dammam — including culturally specific peaks around prayer times and the midday heat period.
 
-**Effective travel time:** `travel_time(d, t) = d / (free_flow_speed × speed_factor(t))`
+### How It Works
+
+```
+Confirmed delivery stops (lat/lng pairs)
+          │
+          ▼
+Google Maps Distance Matrix API
+  - Inputs:  list of origins, list of destinations, departure_time (Unix timestamp)
+  - Returns: travel_time_in_traffic (seconds) + distance (meters) for every O-D pair
+          │
+          ▼
+    N × N cost matrix
+          │
+          ▼
+  OR-Tools CVRPTW Optimizer
+```
+
+The key parameter is `departure_time`: by passing the actual planning window start time as a Unix timestamp, the API returns travel times that reflect real traffic at that specific hour — not a fixed average. A route planned for **8am Tuesday** will have a different cost matrix than the same route planned for **Maghrib time**, automatically capturing prayer-time congestion without any manual calibration.
+
+### Implementation
+
+```python
+import requests
+import numpy as np
+
+def build_cost_matrix(stops, departure_time, api_key):
+    """
+    stops:          list of (lat, lng) tuples — one per delivery stop + depot
+    departure_time: Unix timestamp (int) for the planning window start
+    api_key:        Google Maps API key
+    Returns:        NxN matrix of travel times in seconds
+    """
+    n = len(stops)
+    matrix = np.zeros((n, n))
+
+    origins      = "|".join([f"{lat},{lng}" for lat, lng in stops])
+    destinations = origins  # same set of points (full O-D matrix)
+
+    url = "https://maps.googleapis.com/maps/api/distancematrix/json"
+    params = {
+        "origins":        origins,
+        "destinations":   destinations,
+        "departure_time": departure_time,
+        "traffic_model":  "best_guess",   # blends historical + live traffic
+        "key":            api_key
+    }
+
+    response = requests.get(url, params=params).json()
+
+    for i, row in enumerate(response["rows"]):
+        for j, element in enumerate(row["elements"]):
+            if element["status"] == "OK":
+                # duration_in_traffic uses real traffic data — NOT duration (static)
+                matrix[i][j] = element["duration_in_traffic"]["value"]
+            else:
+                matrix[i][j] = float("inf")   # stop pair unreachable
+
+    return matrix
+```
+
+> **Critical detail:** always use `duration_in_traffic`, not `duration`. The plain `duration` field returns a static estimate with no traffic awareness. `duration_in_traffic` is what makes the cost matrix time-dependent.
+
+### API Practicalities
+
+| Parameter | Value |
+|---|---|
+| Free monthly quota | 100,000 elements ($200 Google credit) |
+| Cost beyond quota | ~$5 per 1,000 elements |
+| Elements per request | Up to 100 (batch larger matrices) |
+| One element | One O-D pair (e.g. 20 stops → 400 elements) |
+
+For a senior project demo with 20–30 stops per planning window, the free tier is more than sufficient. For larger instances, the matrix is batched across multiple requests automatically.
+
+### Re-optimization Under Disruptions
+
+Because the cost matrix is an API call rather than a trained model, re-optimization is straightforward: when a disruption occurs mid-route (traffic incident, driver delay), the optimizer re-calls the API with the current time as `departure_time` and re-solves with the updated cost matrix. No model retraining or recalibration is needed.
+
+### Future Extension
+
+Once real GPS execution data is available (drivers completing routes and recording stop timestamps), actual observed travel times can be compared against API estimates to quantify prediction error and, if needed, train a lightweight correction model on top of the API baseline.
 
 ---
 
@@ -254,7 +321,7 @@ Hour H:     Demand models forecast demand for hours H+1 … H+K
             → Fleet sizing heuristic determines vehicles to dispatch
 
 Hour H+1:   Confirmed orders arrive for planning window
-            → Time-Dependent Cost Matrix computed for planning window start time
+            → Time-Dependent Cost Matrix built via Maps API for planning window start time
             → Optimizer solves CVRPTW using:
                   - Confirmed stops
                   - Zone clusters as warm-start
@@ -265,7 +332,7 @@ Hour H+1:   Confirmed orders arrive for planning window
 During execution:
             - Actual stop completion times recorded
             - Data feeds back into future demand model retraining
-            - Speed factor table can be calibrated from observed vs. predicted times
+            - API estimates vs. actual stop times recorded for future model refinement
 ```
 
 ---
@@ -321,7 +388,7 @@ Senior-Project-Model/
 | Saudi data generation | Custom Python generator calibrated to TGA 2024 |
 | Saudi road network | `osmnx`, OpenStreetMap (planned) |
 | Route optimization | `OR-Tools` CVRPTW (planned) |
-| Travel cost matrix | `osmnx` + time-of-day speed factor table (planned) |
+| Travel cost matrix | Google Maps Distance Matrix API with `departure_time` (planned) |
 | Evaluation | MAE, RMSE, sMAPE |
 | Visualization | `matplotlib` |
 | Environment | Google Colab, Python 3.x |
