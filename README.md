@@ -1,6 +1,6 @@
 # AI-Driven Last-Mile Delivery Optimization
 
-A senior project that combines **demand forecasting**, **route optimization**, and **travel-time estimation** to build an end-to-end intelligent last-mile logistics system.
+A senior project that combines **demand forecasting**, **route optimization**, and **time-dependent travel-cost estimation** to build an end-to-end intelligent last-mile logistics system — localized for Saudi Arabia.
 
 ---
 
@@ -8,28 +8,30 @@ A senior project that combines **demand forecasting**, **route optimization**, a
 
 1. [Project Overview](#project-overview)
 2. [System Architecture](#system-architecture)
-3. [Dataset](#dataset)
-4. [Part 1 — Demand Forecasting (COMPLETED)](#part-1--demand-forecasting-completed)
-5. [Part 2 — Route Optimizer & Fleet Assignment (REMAINING)](#part-2--route-optimizer--fleet-assignment-remaining)
-6. [Part 3 — Travel-Time & Emissions Model (REMAINING)](#part-3--travel-time--emissions-model-remaining)
-7. [How the Three Parts Connect](#how-the-three-parts-connect)
-8. [Results So Far](#results-so-far)
-9. [Repository Structure](#repository-structure)
-10. [Tech Stack](#tech-stack)
+3. [Datasets](#datasets)
+4. [Saudi Localization](#saudi-localization)
+5. [Part 1 — Demand Forecasting](#part-1--demand-forecasting)
+6. [Part 2 — Route Optimizer & Fleet Assignment (IN PROGRESS)](#part-2--route-optimizer--fleet-assignment-in-progress)
+7. [Part 3 — Time-Dependent Cost Matrix (REMAINING)](#part-3--time-dependent-cost-matrix-remaining)
+8. [How the Three Parts Connect](#how-the-three-parts-connect)
+9. [Results So Far](#results-so-far)
+10. [Repository Structure](#repository-structure)
+11. [Tech Stack](#tech-stack)
 
 ---
 
 ## Project Overview
 
-Last-mile delivery is the most expensive and least efficient leg of any logistics network — it accounts for up to 53% of total shipping costs. This project builds a three-component system that addresses last-mile delivery from prediction through planning through execution:
+Last-mile delivery is the most expensive and least efficient leg of any logistics network — it accounts for up to 53% of total shipping costs. This project builds a three-component system that addresses last-mile delivery from prediction through planning through execution, with constraints and cost models adapted for the Saudi Arabian context:
 
 | Component | Role | Status |
 |---|---|---|
-| **Model 1 — Demand Forecasting** | Predicts how many deliveries will arrive per zone per hour | ✅ Complete |
-| **Optimizer — Route & Fleet** | Decides which vehicle goes where and in what order | 🔲 Remaining |
-| **Model 2 — Travel-Time Estimation** | Provides realistic, time-dependent travel times and emissions costs to the optimizer | 🔲 Remaining |
+| **Model 1 — LaDe Demand Forecasting** | Learns general temporal demand patterns from the LaDe-P (Cainiao) dataset | ✅ Complete |
+| **Model 2 — Saudi Demand Forecasting** | Forecasts hourly delivery demand per zone using Saudi-calibrated synthetic data | ✅ Complete |
+| **Optimizer — Route & Fleet** | Decides which vehicle goes where and in what order, subject to Saudi-specific constraints | 🔲 In Progress |
+| **Cost Matrix — Time-Dependent Travel Times** | Provides realistic, time-of-day-aware travel costs to the optimizer | 🔲 Remaining |
 
-The core idea: **predict** incoming demand, **plan** optimal routes, and **adapt** those plans in real time using learned travel costs.
+The core idea: **predict** incoming demand, **plan** optimal routes under real-world Saudi constraints, and **cost** those routes using travel times that reflect actual traffic patterns including prayer-time congestion.
 
 ---
 
@@ -40,185 +42,230 @@ The core idea: **predict** incoming demand, **plan** optimal routes, and **adapt
 │                        PLANNING WINDOW                              │
 │                                                                     │
 │   ┌─────────────────┐    demand forecast     ┌──────────────────┐  │
-│   │   Model 1       │ ─────────────────────► │                  │  │
+│   │   Demand Models │ ─────────────────────► │                  │  │
 │   │  (XGBoost       │                        │   OR-Tools       │  │
-│   │   Demand        │   actual orders        │   Optimizer      │  │
-│   │   Forecast)     │ ─────────────────────► │   (VRP + Fleet   │  │
+│   │   LaDe +        │   actual orders        │   Optimizer      │  │
+│   │   Saudi)        │ ─────────────────────► │   (VRP + Fleet   │  │
 │   └─────────────────┘                        │    Assignment)   │  │
 │                                              │                  │  │
-│   ┌─────────────────┐   realistic travel     │                  │  │
-│   │   Model 2       │   times + emissions    │                  │  │
-│   │  (Travel-Time / │ ─────────────────────► │                  │  │
-│   │   Emissions     │                        └──────────┬───────┘  │
-│   │   Estimation)   │                                   │          │
-│   └────────┬────────┘                                   │ routes   │
-│            │ learns from                                │          │
-│            │ executed routes                            ▼          │
-│            └──────────────────────────────── EXECUTION + FEEDBACK  │
+│   ┌─────────────────┐   time-of-day aware    │                  │  │
+│   │  Time-Dependent │   travel cost matrix   │                  │  │
+│   │  Cost Matrix    │ ─────────────────────► │                  │  │
+│   │  (speed factors │                        └──────────┬───────┘  │
+│   │  + OSMnx graph) │                                   │          │
+│   └─────────────────┘                                   │ routes   │
+│                                                         ▼          │
+│                                              DISPATCH + EXECUTION   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 **Flow in plain words:**
-1. Model 1 forecasts how many packages will need to be delivered in each zone in the upcoming hours.
-2. The Optimizer receives the actual confirmed orders for the planning window and uses the forecast as a look-ahead signal. It produces concrete decisions: which vehicle serves which stops and in what sequence, subject to constraints (capacity, time windows, fleet size) and objectives (minimize distance, cost, and CO₂ emissions).
-3. As routes are executed and new GPS/traffic data arrives, Model 2 provides more realistic, time-dependent travel times (and optionally energy/emissions costs) back to the Optimizer, enabling better route quality and faster re-optimization under disruptions.
+
+1. **Demand Models** forecast how many packages will need to be delivered in each zone in the upcoming hours. The LaDe model learns general temporal patterns; the Saudi model adds Saudi-specific event and calendar features.
+2. **The Optimizer** receives the confirmed orders for the planning window and solves a Vehicle Routing Problem (VRP). It decides which vehicle serves which stops and in what sequence, subject to hard constraints (vehicle capacity, time windows, fleet size, prayer-time delivery exclusions, heat restrictions) and objectives (minimize distance, cost, and CO₂ emissions).
+3. **The Time-Dependent Cost Matrix** feeds the optimizer with travel-time estimates that vary by time of day — not a fixed average speed. This makes route costs realistic: a 5 km segment at Maghrib rush hour costs significantly more time than the same segment at 2am.
 
 ---
 
-## Dataset
+## Datasets
 
-**LaDe-P (Cainiao / Alibaba Last-Mile Delivery dataset)**
+### LaDe-P (Cainiao / Alibaba Last-Mile Delivery Dataset)
 
 - **Source:** Public dataset from Cainiao's last-mile operations in China.
-- **Coverage:** May 2022 – October 2022 (6 months).
-- **City used:** Chongqing (`pickup_cq.csv` — ~190 MB raw).
-- **Granularity:** Individual package-level pickup/delivery events with timestamps and zone identifiers.
-- **Key fields:**
-  - `city`, `region_id`, `aoi_id` — geographic hierarchy (city → region → area-of-interest)
-  - Timestamps → parsed and bucketed into **hourly** windows
-  - `demand_count` — engineered target: number of deliveries per AOI per hour
+- **File used:** `Delivery.csv`
+- **Granularity:** Individual package-level delivery events with timestamps and zone identifiers.
+- **Key fields:** `city`, `region_id`, `aoi_id`, `ds`, `accept_time`, `order_id`
+- **Purpose:** Train a general-purpose demand forecasting model that learns hourly, daily, and weekly periodicity patterns transferable across urban delivery contexts.
+
+### Saudi Synthetic Dataset (Dammam, Eastern Province)
+
+- **Source:** Generated by `saudi_demand_generator_final.py`, calibrated to official statistics.
+- **Anchor:** TGA 2024 — 290M national orders, Eastern Province 15%, Dammam ~71,507 orders/day.
+- **Coverage:** Full year 2024 (Jan 1 – Dec 31), hourly granularity.
+- **Zones:** 10 AOIs across 3 regions in Dammam (Al Muraikabat, Al Faisaliah, Al Rawdah, Al Shatea, Al Jawharah, Al Aziziyah, Al Hamra, Al Khalidiyah, Al Noor, Al Badiyah).
+- **Event multipliers grounded in:**
+  - Ramadan +22% (Checkout.com), Eid +40–60% (SAMA Mada), White Friday +29–74% (AppsFlyer 2024)
+  - National Day +20% (Ministry of Commerce), Founding Day +15%, Hajj -10% (logistics reallocation)
+  - Prayer-time dips (-28–45%), Friday-Saturday weekend pattern (TGA regional data)
+  - Summer heat midday suppression -55% (Dammam >45°C)
+  - Monthly growth trend +22% YoY (TGA Q1 2025)
 
 ---
 
-## Part 1 — Demand Forecasting (COMPLETED)
+## Saudi Localization
 
-### Goal
-Predict `demand_count` (number of deliveries) for each `(city, region_id, aoi_id, hour)` combination up to several hours ahead.
+### Prayer Time Delivery Windows
 
-### Notebooks
+Saudi deliveries are subject to interruptions during the five daily prayers. The optimizer treats these as **hard exclusion windows** — no deliveries are scheduled during a prayer period. The demand generator applies dip multipliers at prayer hours.
 
-| Notebook | Purpose |
+| Prayer | Approximate Exclusion Window |
 |---|---|
-| `LaDe.ipynb` | Raw data → feature engineering → `lade_hourly_features.csv` |
-| `LaDe_XGBoost_Forecast.ipynb` | Model training, evaluation, and comparison |
+| Fajr | 04:15 – 04:45 |
+| Dhuhr | 12:15 – 12:55 |
+| Asr | 15:30 – 16:00 |
+| Maghrib | 19:00 – 19:30 |
+| Isha | 20:30 – 21:00 |
 
-### Preprocessing & Feature Engineering (`LaDe.ipynb`)
+### Extreme Heat Restrictions
 
-- Parsed timestamps (no year in raw data → prepended `2022`).
-- Bucketed into **hourly** time windows (`bucket_hour`).
-- Aggregated to `(city, region_id, aoi_id, bucket_hour)` and computed `demand_count`.
-- Filled missing hours per AOI with `demand_count = 0` (continuous series).
-- Built time features: `hour`, `day_of_week`, `month`, weekend flag.
-- Built lag features: `lag_1`, `lag_2`, `lag_24`, `lag_48`, `lag_168` (same hour yesterday / last week).
-- Built rolling features: `roll_24_mean`, `roll_168_mean` (24h and 7-day rolling averages).
-- Output: **`lade_hourly_features.csv`** (~65 MB, ready for modeling).
+Summer temperatures in Dammam regularly exceed 45°C. The **Ministry of Human Resources heat work ban** prohibits outdoor labor between **12:00 PM and 3:00 PM** from June 15 to September 15. The demand generator suppresses midday demand by 55% during summer months.
 
-### Model Training (`LaDe_XGBoost_Forecast.ipynb`)
+### Saudi Calendar Events
 
-- **Algorithm:** XGBoost regression (gradient boosted trees).
-- **Split strategy:** Chronological 60 / 20 / 20 (train / val / test) — no data leakage.
-- **Train set:** May 2022 – ~Aug 2022
-- **Test set starts:** 2022-08-14 23:00
-- **Test rows:** 122,100 observations
-- **Variants trained:** standard XGBoost, `reg:squaredlogerror` (better for sparse/zero-heavy targets), zero-inflated (logistic for P(demand>0) + conditional XGBoost).
+The Saudi model includes binary features for: Ramadan, Eid Al-Fitr, Eid Al-Adha (+ pre-Eid surge days), White Friday, National Day (Sep 16–30), Founding Day (Feb 18–25), Back-to-School (Sep 1–14), Hajj, and Summer. The Saudi weekend is Friday–Saturday.
 
-### Results
+### Saudi Road Network (Planned)
 
-| Model | MAE (val) | RMSE (val) | sMAPE (val) | MAE (test) | RMSE (test) | sMAPE (test) |
-|---|---|---|---|---|---|---|
-| Baseline `lag_24` | 0.3579 | 0.8710 | 131.85% | 0.3089 | 0.8020 | 135.58% |
-| Baseline `roll_24_mean` | 0.5912 | 1.0219 | 182.29% | 0.4908 | 0.9039 | 184.20% |
-| **XGBoost** | **0.2931** | **0.6595** | 168.94% | **0.2595** | **0.6040** | 172.40% |
-| XGBoost (squaredlogerror) | 0.2945 | 0.6605 | 167.40% | 0.2612 | 0.6049 | 169.70% |
-| XGBoost (zero-inflated) | 0.3099 | 0.6792 | 177.08% | 0.2709 | 0.6252 | 181.89% |
+The optimizer will use a real Saudi road network extracted via `osmnx` from OpenStreetMap for Riyadh/Dammam routing.
 
-**Key takeaway:** XGBoost achieves **16% lower MAE** and **25% lower RMSE** versus the best naive baseline (`lag_24`) on the test set. The high sMAPE figures are expected — many AOIs have near-zero demand in off-peak hours, making percentage-based errors inflate.
+### Vehicle Fleet (Saudi Context)
 
-**Top features by importance:** `lag_24`, `lag_168`, `roll_24_mean`, `hour`, `roll_168_mean` — confirming that day-of-week and time-of-day periodicity are the strongest signals.
+| Vehicle Type | Capacity | Notes |
+|---|---|---|
+| Small electric van | 300 kg / 2 m³ | Urban zones, lower emissions |
+| Medium diesel van | 700 kg / 5 m³ | Standard fleet workhorse |
+| Large diesel truck | 1500 kg / 12 m³ | Bulk delivery corridors |
 
 ---
 
-## Part 2 — Route Optimizer & Fleet Assignment (REMAINING)
+## Part 1 — Demand Forecasting
+
+Two parallel forecasting pipelines were built: one on the public LaDe-P dataset (general temporal patterns) and one on Saudi-calibrated synthetic data (Saudi-specific events and calendar).
+
+### LaDe Model
+
+**Notebooks:** `LaDe-model/LaDe_Feature_Engineering.ipynb` → `LaDe-model/LaDe_Model_Training.ipynb`
+
+#### Feature Engineering (`LaDe_Feature_Engineering.ipynb`)
+
+- Parsed timestamps from `ds` + `accept_time` columns into a clean `accept_dt` datetime.
+- Bucketed into **hourly** time windows (`bucket_hour`).
+- Aggregated to `(city, region_id, aoi_id, bucket_hour)` → `demand_count`.
+- Filled missing hours per AOI with `demand_count = 0` (continuous series, O(1) lookup via pre-grouped dict).
+- Selected top 300 busiest AOIs (`MAX_AOIS = 300`).
+- Built time features: `hour`, `dow`, `month`, `is_weekend_fri_sat`, `is_weekend_sat_sun`.
+- Built lag features: `lag_1`, `lag_2`, `lag_24`, `lag_48`, `lag_168`.
+- Built rolling features: `roll_24_mean`, `roll_168_mean` (shifted by 1 to prevent leakage).
+- Output: **`lade_hourly_features.csv`**
+
+#### Model Training (`LaDe_Model_Training.ipynb`)
+
+- **Split:** Chronological 60/20/20 (train/val/test) — no data leakage.
+- **Additional features:** Circadian encoding (`hour_sin`, `hour_cos`), `is_ramadan`, `is_holiday`, `neighbor_lag_24_mean` (spatial feature: mean lag_24 of other AOIs in the same region).
+- **Sample weights:** Weighted by total demand volume per AOI (busier zones get higher weight).
+- **Models trained:**
+  - Standard XGBoost (`reg:squarederror`, early stopping at 100 rounds, max 5000 estimators)
+  - XGBoost with `reg:squaredlogerror` (better for sparse/zero-heavy targets)
+  - Zero-inflated: Logistic regression P(demand>0) × conditional XGBoost E[demand|demand>0]
+- **Baselines:** `lag_24`, `roll_24_mean`
+
+### Saudi Model
+
+**Data generator:** `Saudi-model/saudi_demand_generator_final.py`
+**Notebook:** `Saudi-model/Saudi_Model_Training.ipynb`
+
+#### Synthetic Data Generation (`saudi_demand_generator_final.py`)
+
+Generates a full-year (2024) hourly demand dataset for 10 Dammam zones using layered multipliers:
+- **Layer 1 (always-on):** Hourly profile, prayer-time dips, day-of-week pattern, monthly growth trend.
+- **Layer 2 (events):** Ramadan hourly reshaping (daytime -45%, post-Iftar +85%), Eid surges, White Friday, National Day, Founding Day, Back-to-School, Hajj suppression, summer heat midday dip.
+- Output schema matches `lade_hourly_features.csv` for pipeline compatibility.
+
+#### Model Training (`Saudi_Model_Training.ipynb`)
+
+- Same XGBoost pipeline as the LaDe model (3 variants + baselines).
+- **Saudi-specific features:** `is_ramadan`, `is_eid`, `is_eid_pre`, `is_white_friday`, `is_national_day`, `is_founding_day`, `is_back_to_school`, `is_hajj`, `is_summer`, `is_weekend` (Fri–Sat).
+- Circadian encoding and neighbor lag features included.
+- Chronological 60/20/20 split, early stopping, sample weighting by AOI demand volume.
+
+---
+
+## Part 2 — Route Optimizer & Fleet Assignment (IN PROGRESS)
 
 ### Goal
 Given a planning window of confirmed orders (stops to serve), decide:
 - Which vehicle is assigned to which stops.
 - The exact sequence of stops each vehicle follows.
-- Subject to hard constraints and minimizing cost/distance/emissions.
+- Subject to Saudi-specific hard constraints and minimizing cost/distance/emissions.
 
 ### Approach: OR-Tools Vehicle Routing Problem (VRP)
 
-We will use **Google OR-Tools** — specifically its `routing` library — which solves variants of the Vehicle Routing Problem.
+We use **Google OR-Tools** `routing` library to solve a capacitated VRP with time windows (CVRPTW).
 
 **Problem formulation:**
 
 ```
-Minimize:   Σ (travel distance) + α × Σ (CO₂ emissions)
+Minimize:   Σ (travel distance × cost_per_km) + α × Σ (CO₂ emissions)
 
 Subject to:
   - Each stop served by exactly one vehicle
-  - Vehicle capacity constraints (volume / weight)
-  - Time window constraints per stop (customer available slots)
-  - Fleet size limit (number of vehicles available)
-  - Depot start/end constraints
+  - Vehicle capacity constraints (weight and volume)
+  - Customer time window constraints
+  - Prayer-time exclusion windows (hard — no service during prayer periods)
+  - Heat ban exclusion window (12:00–15:00, June 15–Sept 15)
+  - Fleet size limit (number of vehicles available per depot)
+  - Driver working hours ≤ 8h per shift
+  - All routes start and end at the depot
 ```
 
-### Fleet Assignment Sub-problem
-Before or jointly with routing, we need to decide how many vehicles of each type to deploy:
-- Small electric vans (lower emissions, lower capacity, cheaper per km)
-- Large diesel trucks (higher capacity, higher emissions, higher cost)
+### Fleet Assignment
 
-This can be modeled as a Mixed-Integer Program or handled as a pre-processing heuristic before VRP.
+Fleet assignment is handled as a **pre-processing step** before VRP: the demand forecast is used to estimate the total delivery load for the upcoming planning window. Based on load, a greedy heuristic selects the minimum-cost combination of vehicle types that covers the required capacity.
 
-### Role of Model 1 Output
-- The demand forecast for the next planning window can be used to **pre-position** vehicles or **warm-start** the optimizer with expected clusters of demand.
-- If actual orders are lighter/heavier than forecast, the optimizer re-solves with updated data.
-
-### Key Constraints to Model
-- Time windows per delivery stop
-- Vehicle load capacity
-- Driver working hours
-- Return to depot
+| Vehicle Type | Capacity (kg) | Cost (SAR/km) | Emissions (g CO₂/km) |
+|---|---|---|---|
+| Small electric van | 300 | 0.80 | 0 |
+| Medium diesel van | 700 | 1.20 | 180 |
+| Large diesel truck | 1500 | 1.80 | 310 |
 
 ---
 
-## Part 3 — Travel-Time & Emissions Model (REMAINING)
+## Part 3 — Time-Dependent Cost Matrix (REMAINING)
 
 ### Goal
-Replace the static (average-speed) travel time matrix in the optimizer with a **learned, time-dependent** travel time estimate. Optionally also estimate energy consumption / CO₂ per road segment and vehicle type.
+Replace the static (average-speed) travel time matrix with a **time-of-day-aware** travel cost matrix.
 
-### Why This Matters
-The optimizer's solution quality is only as good as the travel time estimates it uses. Static averages ignore:
-- Rush hour congestion (travel time on the same road at 8 AM vs 2 PM can differ 3×).
-- Day-of-week patterns.
-- Disruptions (accidents, weather).
+### Approach: Time-of-Day Speed Factor Table
 
-A learned model makes the optimizer's cost function more realistic and makes re-optimization under disruptions faster and more accurate.
+A speed factor lookup table grounded in documented Saudi urban traffic patterns. Each cell gives a multiplier applied to the OSMnx free-flow road speed:
 
-### Approach (planned)
-- **Input features:** origin-destination pair, time of day, day of week, recent historical speed on segment, weather (optional).
-- **Target:** actual travel time (seconds) for that O-D pair at that time.
-- **Candidate models:** XGBoost (consistent with Part 1) or a lightweight neural network.
-- **Emissions extension:** given vehicle type + speed profile, estimate CO₂ (g/km) using standard emission factor models (COPERT-style) or a learned surrogate.
+| Time Window | Day Type | Speed Factor | Rationale |
+|---|---|---|---|
+| 07:00 – 09:00 | Weekday | 0.60 | Morning commute |
+| 09:00 – 11:30 | Weekday | 0.90 | Mid-morning, relatively clear |
+| 11:30 – 12:15 | Any | 0.75 | Pre-Dhuhr surge |
+| 12:15 – 12:55 | Any | 0.50 | Dhuhr prayer + lunch rush |
+| 13:00 – 15:00 | Weekday | 0.70 | Post-prayer, heat peak |
+| 15:30 – 16:00 | Any | 0.65 | Asr prayer period |
+| 16:00 – 19:00 | Weekday | 0.75 | Afternoon activity |
+| 19:00 – 19:30 | Any | 0.55 | Maghrib prayer + evening rush |
+| 19:30 – 21:00 | Any | 0.70 | Post-Maghrib activity |
+| 21:00 – 01:00 | Any | 0.85 | Evening wind-down |
+| 01:00 – 06:00 | Any | 1.00 | Free-flow (near empty roads) |
 
-### Integration with Optimizer
-At each re-optimization event, the travel-time model provides an updated cost matrix to OR-Tools, enabling:
-- More realistic initial route plans.
-- Faster and better re-routing when a disruption occurs mid-route.
+**Effective travel time:** `travel_time(d, t) = d / (free_flow_speed × speed_factor(t))`
 
 ---
 
 ## How the Three Parts Connect
 
 ```
-Hour H:     Model 1 forecasts demand for hours H+1 … H+K
+Hour H:     Demand models forecast demand for hours H+1 … H+K
+            → Fleet sizing heuristic determines vehicles to dispatch
+
 Hour H+1:   Confirmed orders arrive for planning window
-            → Optimizer solves VRP using:
-                  - Actual confirmed stops
-                  - Model 1 forecast as look-ahead
-                  - Model 2 travel-time matrix (time-of-day aware)
-            → Dispatch routes to drivers
+            → Time-Dependent Cost Matrix computed for planning window start time
+            → Optimizer solves CVRPTW using:
+                  - Confirmed stops
+                  - Zone clusters as warm-start
+                  - Prayer/heat exclusion windows as hard constraints
+                  - Time-aware travel cost matrix
+            → Routes dispatched to drivers
 
 During execution:
-            - GPS traces collected
-            - Actual travel times recorded
-            - Model 2 updated (online or periodic retraining)
-
-Disruption: → Optimizer re-solves with updated Model 2 costs
-            → Revised routes pushed to affected drivers
-
-End of day: → Execution data feeds back into Model 1 training
-              and Model 2 training for next cycle
+            - Actual stop completion times recorded
+            - Data feeds back into future demand model retraining
+            - Speed factor table can be calibrated from observed vs. predicted times
 ```
 
 ---
@@ -227,16 +274,19 @@ End of day: → Execution data feeds back into Model 1 training
 
 | Milestone | Status |
 |---|---|
-| Data acquisition (LaDe-P Chongqing) | ✅ Done |
-| Hourly AOI-level feature engineering | ✅ Done |
-| Chronological train/val/test split | ✅ Done |
+| LaDe-P data acquisition & feature engineering | ✅ Done |
+| Saudi synthetic data generator (TGA-calibrated) | ✅ Done |
+| Chronological train/val/test split (both models) | ✅ Done |
 | Baseline models (`lag_24`, `roll_24_mean`) | ✅ Done |
-| XGBoost demand forecast (3 variants) | ✅ Done |
+| XGBoost demand forecast — LaDe (3 variants) | ✅ Done |
+| XGBoost demand forecast — Saudi (3 variants) | ✅ Done |
 | Model evaluation (MAE / RMSE / sMAPE) | ✅ Done |
 | Feature importance analysis | ✅ Done |
-| OR-Tools VRP optimizer | 🔲 Next |
-| Fleet assignment module | 🔲 Pending |
-| Travel-time estimation model | 🔲 Pending |
+| Saudi OSMnx road network extraction | 🔲 Next |
+| Prayer/heat window constraint encoding | 🔲 Next |
+| OR-Tools CVRPTW optimizer | 🔲 Next |
+| Fleet assignment heuristic | 🔲 Pending |
+| Time-dependent cost matrix | 🔲 Pending |
 | End-to-end integration | 🔲 Pending |
 
 ---
@@ -244,14 +294,21 @@ End of day: → Execution data feeds back into Model 1 training
 ## Repository Structure
 
 ```
-senior project/
-├── LaDe.ipynb                    # Part 1a: preprocessing + feature engineering
-├── LaDe_XGBoost_Forecast.ipynb   # Part 1b: XGBoost model training + evaluation
-├── lade_hourly_features.csv      # Engineered feature table (~65 MB, git-ignored)
-├── pickup_cq.csv                 # Raw LaDe-P Chongqing data (~190 MB, git-ignored)
-├── NOTEBOOKS.md                  # Short guide to running the notebooks
-└── README.md                     # This file
+Senior-Project-Model/
+├── LaDe-model/
+│   ├── LaDe_Feature_Engineering.ipynb    # Raw LaDe data → hourly features (lade_hourly_features.csv)
+│   └── LaDe_Model_Training.ipynb         # XGBoost training + evaluation on LaDe data
+│
+├── Saudi-model/
+│   ├── saudi_demand_generator_final.py   # TGA-calibrated synthetic demand generator for Dammam
+│   └── Saudi_Model_Training.ipynb        # XGBoost training + evaluation on Saudi data
+│
+└── README.md                             # This file
 ```
+
+**Data files** (generated, not committed):
+- `lade_hourly_features.csv` — LaDe feature table (~65 MB, stored on Google Drive)
+- `saudi_hourly_features.csv` — Saudi feature table (stored on Google Drive)
 
 ---
 
@@ -260,21 +317,27 @@ senior project/
 | Layer | Tool |
 |---|---|
 | Data processing | `pandas`, `numpy` |
-| Demand forecasting | `XGBoost 3.2` |
-| Route optimization | `OR-Tools` (planned) |
-| Travel-time model | `XGBoost` / `scikit-learn` (planned) |
-| Evaluation | `MAE`, `RMSE`, `sMAPE` |
-| Environment | Google Colab (GPU/CPU), Python 3.x |
+| Demand forecasting | `XGBoost` |
+| Saudi data generation | Custom Python generator calibrated to TGA 2024 |
+| Saudi road network | `osmnx`, OpenStreetMap (planned) |
+| Route optimization | `OR-Tools` CVRPTW (planned) |
+| Travel cost matrix | `osmnx` + time-of-day speed factor table (planned) |
+| Evaluation | MAE, RMSE, sMAPE |
+| Visualization | `matplotlib` |
+| Environment | Google Colab, Python 3.x |
 | Version control | Git |
 
 ---
 
-## Quick-Start (Demand Forecasting)
+## Quick-Start
 
 ```bash
-# 1. Open in Google Colab or Jupyter
-# 2. Run LaDe.ipynb — generates lade_hourly_features.csv
-# 3. Run LaDe_XGBoost_Forecast.ipynb — trains and evaluates models
+# LaDe Model
+# 1. Upload Delivery.csv to Google Drive
+# 2. Run LaDe-model/LaDe_Feature_Engineering.ipynb → generates lade_hourly_features.csv
+# 3. Run LaDe-model/LaDe_Model_Training.ipynb → trains and evaluates models
 
-# Data: upload pickup_cq.csv to Google Drive, update path in first cell of LaDe.ipynb
+# Saudi Model
+# 1. Run Saudi-model/saudi_demand_generator_final.py → generates saudi_hourly_features.csv
+# 2. Run Saudi-model/Saudi_Model_Training.ipynb → trains and evaluates models
 ```
