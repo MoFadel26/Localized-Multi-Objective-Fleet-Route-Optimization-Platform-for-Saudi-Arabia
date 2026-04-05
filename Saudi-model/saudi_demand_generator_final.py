@@ -429,8 +429,8 @@ print(f"  ✓ Test:  {len(test):>7,}  "
 print("\nSTEP 6: Saving...")
 
 # ── Change this path to your Google Drive folder ──
-SAVE_PATH = "data"
-# SAVE_PATH = "/content/drive/MyDrive/Senior_Project"  # ← uncomment for Drive
+# SAVE_PATH = "data"
+SAVE_PATH = "/content/drive/MyDrive/Senior Project/Saudi-Dataset"  # ← uncomment for Drive
 
 os.makedirs(SAVE_PATH, exist_ok=True)
 
