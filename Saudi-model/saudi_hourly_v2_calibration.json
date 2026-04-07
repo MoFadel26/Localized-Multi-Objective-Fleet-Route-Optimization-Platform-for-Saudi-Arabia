@@ -1,0 +1,146 @@
+{
+  "dataset": {
+    "file": "/Users/fadel/Downloads/Saudi Data/saudi_hourly_v2.csv",
+    "rows": 122516,
+    "aois": 14,
+    "hours": 8784,
+    "date_range": [
+      "2024-01-01 00:00:00",
+      "2024-12-31 23:00:00"
+    ],
+    "seed": 20240406
+  },
+  "empirical_inputs_from_markdown": {
+    "ramadan_month_uplift_band": [
+      1.2,
+      1.4
+    ],
+    "eid_day_uplift_band": [
+      1.4,
+      1.6
+    ],
+    "white_friday_day_uplift_band": [
+      1.3,
+      1.7
+    ],
+    "november_month_baseline": [
+      1.05,
+      1.12
+    ],
+    "national_day_window_band": [
+      1.1,
+      1.3
+    ],
+    "founding_day_window_band": [
+      1.05,
+      1.2
+    ],
+    "back_to_school_band": [
+      0.93,
+      1.0
+    ],
+    "hajj_band_dammam": [
+      0.97,
+      1.02
+    ],
+    "annual_growth_yoy": 0.22,
+    "sources": [
+      "Checkout.com KSA Ramadan digital payments analysis (+22%)",
+      "SAMA Mada e-commerce bulletins (Q1 2024, March 2025, Oct 2025)",
+      "AppsFlyer White Friday 2024 Saudi/UAE report",
+      "Flowwow/Admitad MENA White Friday 2024",
+      "Saudi MoC 95th National Day discount-licensing announcement",
+      "GASTAT / academic Hajj logistics papers"
+    ]
+  },
+  "modeling_assumptions": {
+    "absolute_demand_scale": "No defensible per-AOI order count in the markdown. Each AOI's base_scale is drawn from an archetype-specific range chosen for plausibility, not derived from official statistics.",
+    "aoi_archetypes": "7 archetypes (residential_evening, commercial_midday, mall_leisure, office_cluster, mixed, low_density, nightlife). Hourly shapes, day-of-week profiles, and event sub-bands are modeling assumptions.",
+    "prayer_time_effects": "Only a soft Friday midday dip (0.75x at 12-13) is applied, and only to commercial/office archetypes. Much softer than the old script's -28% to -45% global dips, which were not sourced.",
+    "ramadan_intraday_shape_shift": "Multiplicative daytime dampening (0.85) + late-evening/Suhoor lift (1.20), normalized to preserve the daily total. The MONTHLY volume uplift is handled separately and kept inside the markdown 1.20-1.40 band.",
+    "summer_midday_softener": "Only -15% at 12-15 in Jun/Jul/Aug, and only for mall_leisure and low_density archetypes. Old script applied -55% globally \u2014 overstated and unsourced.",
+    "hajj_effect_in_dammam": "Kept near 1.0 (band 0.97-1.02) per markdown: no quantified e-commerce effect outside the western corridor.",
+    "noise_model": "Heteroskedastic negative binomial with hour-dependent dispersion (off-peak 2x more dispersed than peak). Plus AR(1) latent driver, independent across AOIs.",
+    "outages_and_shocks": "~12 multi-hour outages per AOI per year, ~1.5% hourly promo rate, ~0.8% hourly disruption rate. Sparsity collapse on low-demand hours with archetype-specific probability.",
+    "missing_hours": "~0.4% random row dropout to simulate logging gaps."
+  },
+  "lade_inspired_design_choices": {
+    "heterogeneous_archetypes": "LaDe has 14 distinct aoi_type codes with visibly different hourly patterns. We mirror that with 7 distinct archetypes whose shape functions are genuinely different (not Gaussian sums of the same family).",
+    "low_cross_aoi_correlation": "Measured LaDe mean pairwise AOI correlation \u2248 0.07 on top-20 AOIs. We target much lower than the old dataset's 0.45 by making the AR(1) latent driver independent per AOI and by giving each AOI an independent event-response draw.",
+    "heavy_tailed_per_aoi": "LaDe small AOIs have 95%+ zero hours. We don't go that extreme, but we apply archetype-specific sparsity collapse (18-25% for office_cluster / low_density) to recover natural dead hours.",
+    "asymmetric_hour_shapes": "LaDe's hour-of-day histogram is skewed (morning-heavy courier pickups). We use asymmetric shape functions (sigmoid, shifted Gaussians on circular time, bracketed step for office) rather than symmetric double Gaussians."
+  },
+  "measured_diagnostics": {
+    "cross_aoi_corr_mean": 0.2393997356644464,
+    "cross_aoi_corr_min": -0.2930487506071712,
+    "cross_aoi_corr_max": 0.6869566921710454,
+    "zero_demand_share": 0.008880472754578993,
+    "mean_lag1_autocorr": 0.5891058434488314,
+    "event_uplifts": {
+      "ramadan": {
+        "mean": 1.2250901211180378,
+        "min": 1.0277362323130463,
+        "max": 1.5015300953347999
+      },
+      "eid": {
+        "mean": 1.4149218891488518,
+        "min": 0.9897830330875538,
+        "max": 1.798203065987577
+      },
+      "white_friday": {
+        "mean": 1.3612197695191022,
+        "min": 0.5887240356083087,
+        "max": 1.8843423373518564
+      },
+      "national_day": {
+        "mean": 1.259953327464018,
+        "min": 0.9804583028330167,
+        "max": 1.4502688317487662
+      },
+      "founding_day": {
+        "mean": 1.0561856033706754,
+        "min": 0.729381448037425,
+        "max": 1.2569301066170249
+      },
+      "back_to_school": {
+        "mean": 0.9953106478902595,
+        "min": 0.8668677657138835,
+        "max": 1.1689806107546605
+      },
+      "hajj": {
+        "mean": 1.0740541779932697,
+        "min": 0.5698629209680149,
+        "max": 1.7709986470397876
+      }
+    }
+  },
+  "known_limitations": [
+    "Absolute demand magnitudes are not derived from any official Dammam or Eastern-Province statistic.",
+    "AOI names are illustrative labels; the generator does not claim that these specific Dammam neighborhoods behave this way.",
+    "Weather, traffic, real outages, and courier-side capacity are not modeled.",
+    "Category-level effects (food, apparel, electronics) are collapsed into total demand_count \u2014 the dataset is not multi-category.",
+    "Hourly intra-day Ramadan reshape magnitude is an assumption, not sourced.",
+    "Event overlap rules (Eid inside Ramadan, BTS inside National Day) are heuristic: Eid replaces Ramadan on Eid days, BTS/Hajj multiply onto whatever is already present."
+  ],
+  "output_schema": [
+    "bucket_hour",
+    "city",
+    "region_id",
+    "aoi_id",
+    "aoi_name",
+    "aoi_archetype",
+    "demand_count",
+    "hour",
+    "day_of_week",
+    "month",
+    "is_weekend",
+    "is_ramadan",
+    "is_eid",
+    "is_eid_pre",
+    "is_white_friday",
+    "is_national_day",
+    "is_founding_day",
+    "is_back_to_school",
+    "is_hajj"
+  ]
+}
