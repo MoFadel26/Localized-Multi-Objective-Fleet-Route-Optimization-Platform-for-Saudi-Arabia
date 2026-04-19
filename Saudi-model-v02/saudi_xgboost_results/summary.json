@@ -1,0 +1,16 @@
+{
+  "best_model_name": "XGBoost SquaredLog",
+  "best_test_accuracy": 0.8943320241347905,
+  "test_metrics": {
+    "model": "XGBoost SquaredLog (test)",
+    "accuracy": 0.8943320241347905,
+    "mae": 0.2378317100438141,
+    "rmse": 1.0054611508828886,
+    "rmsle": 0.17570369996974086,
+    "poisson_deviance": 0.28112630888515217
+  },
+  "feature_count": 50,
+  "train_rows": 546048,
+  "val_rows": 140544,
+  "test_rows": 140544
+}
